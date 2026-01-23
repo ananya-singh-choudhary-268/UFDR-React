@@ -55,7 +55,6 @@ export default function UploadUFDR({ onExtractionStart, onExtractionComplete }) 
   const [status, setStatus] = useState("idle"); // idle, initiating, uploading, completing, queued_for_ingest, completed, error, aborted, failed
   const [message, setMessage] = useState(null);
   const [progress, setProgress] = useState({ uploadedBytes: 0, totalBytes: 0 });
-  const [uploadId, setUploadId] = useState(null);
 
   // For aborting upload
   const abortControllerRef = useRef(null);
@@ -81,7 +80,6 @@ export default function UploadUFDR({ onExtractionStart, onExtractionComplete }) 
     setMessage(null);
     setStatus("idle");
     setProgress({ uploadedBytes: 0, totalBytes: 0 });
-    setUploadId(null);
     setEtaSeconds(null);
     startTimeRef.current = null;
   };
@@ -187,7 +185,6 @@ export default function UploadUFDR({ onExtractionStart, onExtractionComplete }) 
         throw new Error("Invalid init response from server");
       }
 
-      setUploadId(initResp.upload_id);
       setProgress({ uploadedBytes: 0, totalBytes: file.size });
       setStatus("uploading");
       startTimeRef.current = Date.now();

@@ -1,13 +1,96 @@
-import { useState, useRef, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import UserMessage from "./UserMessage";
-import AIMessage from "./AIMessage";
-import AIMessageWithTyping from "./AIMessageWithTyping";
-import { useChat } from "../context/ChatContext";
-import { useUser } from "../context/UserContext";
-import UploadUFDR from "./UploadUFDR";
-import UfdrExtractionOverlay from "./UfdrExtractionOverlay";
+import { useState, useRef, useEffect, useCallback } from 'react';
+import PropTypes from 'prop-types';
+import { useNavigate } from 'react-router-dom';
+import UserMessage from './UserMessage';
+import AIMessage from './AIMessage';
+import AIMessageWithTyping from './AIMessageWithTyping';
+import { useChat } from '../context/ChatContext';
+import { useUser } from '../context/UserContext';
+import UploadUFDR from './UploadUFDR';
+import UfdrExtractionOverlay from './UfdrExtractionOverlay';
+import { sendAnalyticsQuery } from '../services/api';
+import { PROMPT_CARDS, CHAT_CONFIG, UI_CONFIG } from '../constants';
 
+/**
+ * WelcomeScreen component - extracted to avoid duplication
+ */
+const WelcomeScreen = ({ userName, promptCards, onPromptClick, showPromptHandler }) => (
+  <div className="flex-1 flex flex-col items-center justify-center">
+    <div className="text-center w-full max-w-2xl mx-auto">
+      <h1 className="text-4xl font-bold text-white mb-4">
+        Hi, {userName || 'User'}
+      </h1>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-12">
+        {promptCards.map((card, index) => (
+          <button
+            key={index}
+            onClick={() => showPromptHandler && onPromptClick(card.title)}
+            className="text-left p-4 rounded-lg bg-accent-dark hover:bg-accent-dark/70 transition-colors duration-200"
+          >
+            <p className="font-semibold text-gray-200">{card.title}</p>
+            <p className="text-sm text-gray-400">{card.description}</p>
+          </button>
+        ))}
+      </div>
+    </div>
+  </div>
+);
+
+WelcomeScreen.propTypes = {
+  userName: PropTypes.string,
+  promptCards: PropTypes.arrayOf(
+    PropTypes.shape({
+      title: PropTypes.string.isRequired,
+      description: PropTypes.string.isRequired,
+    })
+  ).isRequired,
+  onPromptClick: PropTypes.func,
+  showPromptHandler: PropTypes.bool,
+};
+
+/**
+ * UserAvatar component - handles profile picture with safe fallback
+ */
+const UserAvatar = ({ user, onClick }) => {
+  const [imageError, setImageError] = useState(false);
+
+  const getInitial = () => {
+    return user?.name?.charAt(0).toUpperCase() || UI_CONFIG.DEFAULT_AVATAR_TEXT;
+  };
+
+  return (
+    <button
+      onClick={onClick}
+      className="h-10 w-10 rounded-full bg-accent-dark flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-surface-dark overflow-hidden"
+      aria-label="User menu"
+    >
+      {user?.picture && !imageError ? (
+        <img
+          src={user.picture}
+          alt={user.name || 'User'}
+          className="h-full w-full object-cover"
+          referrerPolicy="no-referrer"
+          crossOrigin="anonymous"
+          onError={() => setImageError(true)}
+        />
+      ) : (
+        <span className="font-semibold text-white">{getInitial()}</span>
+      )}
+    </button>
+  );
+};
+
+UserAvatar.propTypes = {
+  user: PropTypes.shape({
+    name: PropTypes.string,
+    picture: PropTypes.string,
+  }),
+  onClick: PropTypes.func.isRequired,
+};
+
+/**
+ * MainContent - Primary chat interface component
+ */
 const MainContent = ({ isChatView = false, sessionId = null }) => {
   const navigate = useNavigate();
   const { user, logout } = useUser();
@@ -21,7 +104,7 @@ const MainContent = ({ isChatView = false, sessionId = null }) => {
 
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [messages, setMessages] = useState([]);
-  const [inputValue, setInputValue] = useState("");
+  const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState(
     sessionId || currentSessionId
@@ -33,6 +116,12 @@ const MainContent = ({ isChatView = false, sessionId = null }) => {
   const textareaRef = useRef(null);
   const dropdownRef = useRef(null);
   const messagesEndRef = useRef(null);
+
+  // Memoize getChatBySessionId to avoid dependency issues
+  const getChatBySessionIdMemo = useCallback(
+    (id) => getChatBySessionId(id),
+    [getChatBySessionId]
+  );
 
   // Sync activeSessionId with sessionId prop when it changes
   useEffect(() => {
@@ -50,7 +139,7 @@ const MainContent = ({ isChatView = false, sessionId = null }) => {
         setMessages([]);
       } else {
         // Load messages from the new session
-        const chat = getChatBySessionId(newSessionId);
+        const chat = getChatBySessionIdMemo(newSessionId);
         if (chat) {
           const messagesWithoutTyping = chat.messages.map((msg) => ({
             ...msg,
@@ -60,18 +149,18 @@ const MainContent = ({ isChatView = false, sessionId = null }) => {
         }
       }
     }
-  }, [sessionId, currentSessionId, activeSessionId, getChatBySessionId]);
+  }, [sessionId, currentSessionId, activeSessionId, getChatBySessionIdMemo]);
 
   const handleTextareaResize = () => {
     if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = 'auto';
       textareaRef.current.style.height =
-        textareaRef.current.scrollHeight + "px";
+        textareaRef.current.scrollHeight + 'px';
     }
   };
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
   useEffect(() => {
@@ -95,8 +184,9 @@ const MainContent = ({ isChatView = false, sessionId = null }) => {
     // 1. Add user message to the UI instantly
     const userMessage = {
       id: Date.now(),
-      sender: "user",
+      sender: 'user',
       content: inputValue,
+      timestamp: new Date().toISOString(),
     };
 
     setMessages((prevMessages) => [...prevMessages, userMessage]);
@@ -105,49 +195,34 @@ const MainContent = ({ isChatView = false, sessionId = null }) => {
     // Update chat title based on first message
     if (isFirstMessage) {
       const title =
-        inputValue.length > 30
-          ? inputValue.substring(0, 30) + "..."
+        inputValue.length > CHAT_CONFIG.MAX_TITLE_LENGTH
+          ? inputValue.substring(0, CHAT_CONFIG.MAX_TITLE_LENGTH) + '...'
           : inputValue;
       updateChatTitle(sessionIdToUse, title);
     }
 
     const currentQuery = inputValue;
-    setInputValue("");
+    setInputValue('');
     setIsLoading(true);
 
     if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = 'auto';
     }
 
     try {
-      // Format timestamp as 2025-01-10T12:00:00Z
-      const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
-
-      const response = await fetch("http://localhost:8000/api/analytics", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          query: currentQuery,
-          current_timestamp: timestamp,
-          session_id: sessionIdToUse,
-          email_id: user?.email || "anonymous@example.com",
-        }),
+      const data = await sendAnalyticsQuery({
+        query: currentQuery,
+        sessionId: sessionIdToUse,
+        email: user?.email,
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      if (data.status === "success" && data.message) {
+      if (data.status === 'success' && data.message) {
         const aiMessage = {
           id: Date.now() + 1,
-          sender: "ai",
+          sender: 'ai',
           content: data.message,
           isTyping: true,
+          timestamp: new Date().toISOString(),
         };
 
         setMessages((prevMessages) => [...prevMessages, aiMessage]);
@@ -157,10 +232,11 @@ const MainContent = ({ isChatView = false, sessionId = null }) => {
       } else {
         const errorMessage = {
           id: Date.now() + 1,
-          sender: "ai",
+          sender: 'ai',
           content:
-            "I apologize, but I encountered an error while processing your request. Please try again.",
+            'I apologize, but I encountered an error while processing your request. Please try again.',
           isTyping: true,
+          timestamp: new Date().toISOString(),
         };
 
         setMessages((prevMessages) => [...prevMessages, errorMessage]);
@@ -169,32 +245,28 @@ const MainContent = ({ isChatView = false, sessionId = null }) => {
         addMessageToChat(sessionIdToUse, errorMessageForStorage);
       }
     } catch (error) {
-      console.error("Error fetching from API:", error);
+      console.error('Error fetching from API:', error);
 
-      const mockResponse = {
+      const errorResponse = {
         id: Date.now() + 1,
-        sender: "ai",
-        content: `### **ForensicAnalyst Report**
+        sender: 'ai',
+        content: `### Connection Error
 
-**Query:** \`${currentQuery}\`
+Unable to reach the ForensicAnalyst API.
 
-I received your message: "${currentQuery}"
+**Possible causes:**
+- Backend server is not running
+- Network connectivity issues
 
-This is a **test response** since the backend is currently not accessible.
-
-**Mock Analysis Results:**
-- Query processed successfully
-- Response generated with typing effect
-- Markdown formatting supported
-
-*Note: This is a demo response. Once the backend is configured, real analysis will be provided.*`,
+Please ensure the backend is running at the configured API endpoint and try again.`,
         isTyping: true,
+        timestamp: new Date().toISOString(),
       };
 
-      setMessages((prevMessages) => [...prevMessages, mockResponse]);
+      setMessages((prevMessages) => [...prevMessages, errorResponse]);
 
-      const mockResponseForStorage = { ...mockResponse, isTyping: false };
-      addMessageToChat(sessionIdToUse, mockResponseForStorage);
+      const errorResponseForStorage = { ...errorResponse, isTyping: false };
+      addMessageToChat(sessionIdToUse, errorResponseForStorage);
     } finally {
       setIsLoading(false);
     }
@@ -209,37 +281,22 @@ This is a **test response** since the backend is currently not accessible.
     };
 
     if (dropdownOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
+      document.addEventListener('mousedown', handleClickOutside);
     }
 
     return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [dropdownOpen]);
 
-  const promptCards = [
-    {
-      title: "Summarize call logs for user 'John Doe'",
-      description: "Get a quick overview of all incoming and outgoing calls.",
-    },
-    {
-      title: "Find all locations visited on October 9th",
-      description: "Pinpoint geographic data for a specific date.",
-    },
-    {
-      title: "Identify all social media applications",
-      description: "List all installed and used social media apps.",
-    },
-    {
-      title: "Recover deleted images from gallery",
-      description: "Attempt to restore image files marked for deletion.",
-    },
-  ];
+  const handlePromptClick = (prompt) => {
+    setInputValue(prompt);
+  };
 
   const currentChat = activeSessionId
-    ? getChatBySessionId(activeSessionId)
+    ? getChatBySessionIdMemo(activeSessionId)
     : null;
-  const chatTitle = currentChat ? currentChat.title : "New Chat";
+  const chatTitle = currentChat ? currentChat.title : 'New Chat';
 
   return (
     <main className="flex flex-1 flex-col bg-surface-dark">
@@ -248,38 +305,17 @@ This is a **test response** since the backend is currently not accessible.
         {isChatView && (
           <h1 className="text-lg font-semibold text-white">{chatTitle}</h1>
         )}
-        <div className="relative" ref={dropdownRef}>
-          <button
+        <div className="relative ml-auto" ref={dropdownRef}>
+          <UserAvatar
+            user={user}
             onClick={() => setDropdownOpen(!dropdownOpen)}
-            className="h-10 w-10 rounded-full bg-accent-dark flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-surface-dark overflow-hidden"
-          >
-            {user?.picture ? (
-              <img
-                src={user.picture}
-                alt={user.name}
-                className="h-full w-full object-cover"
-                referrerPolicy="no-referrer"
-                crossOrigin="anonymous"
-                onError={(e) => {
-                  console.error("Error loading profile image:", user.picture);
-                  e.target.style.display = "none";
-                  e.target.parentElement.innerHTML = `<span class="font-semibold text-white">${
-                    user?.name?.charAt(0).toUpperCase() || "U"
-                  }</span>`;
-                }}
-              />
-            ) : (
-              <span className="font-semibold text-white">
-                {user?.name?.charAt(0).toUpperCase() || "U"}
-              </span>
-            )}
-          </button>
+          />
           {dropdownOpen && (
-            <div className="absolute right-0 mt-2 w-48 origin-top-right rounded-md bg-accent-dark shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none py-1">
+            <div className="absolute right-0 mt-2 w-48 origin-top-right rounded-md bg-accent-dark shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none py-1 z-50">
               <button
                 onClick={() => {
                   logout();
-                  navigate("/");
+                  navigate('/');
                 }}
                 className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-surface-dark/50"
               >
@@ -294,32 +330,15 @@ This is a **test response** since the backend is currently not accessible.
       {isChatView ? (
         <div className="flex-1 overflow-y-auto p-6 space-y-8">
           {messages.length === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center">
-              <div className="text-center w-full max-w-2xl mx-auto">
-                <h1 className="text-4xl font-bold text-white mb-4">
-                  Hi, {user?.name || "User"}
-                </h1>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-12">
-                  {promptCards.map((card, index) => (
-                    <button
-                      key={index}
-                      onClick={() => setInputValue(card.title)}
-                      className="text-left p-4 rounded-lg bg-accent-dark hover:bg-accent-dark/70 transition-colors duration-200"
-                    >
-                      <p className="font-semibold text-gray-200">
-                        {card.title}
-                      </p>
-                      <p className="text-sm text-gray-400">
-                        {card.description}
-                      </p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
+            <WelcomeScreen
+              userName={user?.name}
+              promptCards={PROMPT_CARDS}
+              onPromptClick={handlePromptClick}
+              showPromptHandler={true}
+            />
           ) : (
             messages.map((message) => {
-              if (message.sender === "user") {
+              if (message.sender === 'user') {
                 return (
                   <UserMessage key={message.id} message={message.content} />
                 );
@@ -342,24 +361,12 @@ This is a **test response** since the backend is currently not accessible.
           <div ref={messagesEndRef} />
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto p-6 flex flex-col items-center justify-center">
-          <div className="text-center w-full max-w-2xl mx-auto">
-            <h1 className="text-4xl font-bold text-white mb-4">
-              Hi, {user?.name || "User"}
-            </h1>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-12">
-              {promptCards.map((card, index) => (
-                <button
-                  key={index}
-                  className="text-left p-4 rounded-lg bg-accent-dark hover:bg-accent-dark/70 transition-colors duration-200"
-                >
-                  <p className="font-semibold text-gray-200">{card.title}</p>
-                  <p className="text-sm text-gray-400">{card.description}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+        <WelcomeScreen
+          userName={user?.name}
+          promptCards={PROMPT_CARDS}
+          onPromptClick={handlePromptClick}
+          showPromptHandler={false}
+        />
       )}
 
       {/* Footer: upload + input bar */}
@@ -371,10 +378,11 @@ This is a **test response** since the backend is currently not accessible.
               type="button"
               onClick={() => setShowUploader((prev) => !prev)}
               className="mb-2 inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-accent-dark px-3 py-1.5 text-xs font-medium text-gray-200 hover:bg-accent-dark/80 transition-colors"
+              aria-expanded={showUploader}
             >
               <span>📎</span>
               <span>
-                {showUploader ? "Hide UFDR upload" : "Upload UFDR report"}
+                {showUploader ? 'Hide UFDR upload' : 'Upload UFDR report'}
               </span>
             </button>
 
@@ -389,7 +397,7 @@ This is a **test response** since the backend is currently not accessible.
                     console.log('UFDR extraction started for upload:', uploadId);
                     setCurrentUploadId(uploadId);
                     setIsExtracting(true);
-                    setShowUploader(false); // Hide uploader while extracting
+                    setShowUploader(false);
                   }}
                   onExtractionComplete={() => {
                     console.log('UFDR extraction completed from uploader');
@@ -411,7 +419,7 @@ This is a **test response** since the backend is currently not accessible.
               onChange={(e) => setInputValue(e.target.value)}
               onInput={handleTextareaResize}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
+                if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
                   handleSendMessage(e);
                 }
@@ -419,16 +427,18 @@ This is a **test response** since the backend is currently not accessible.
               className="w-full resize-none rounded-lg bg-accent-dark border-gray-700 py-3 pl-4 pr-14 text-white placeholder-gray-500 focus:border-primary focus:ring-primary"
               placeholder={
                 isChatView
-                  ? "Ask a follow-up question..."
-                  : "Ask a question or type a command..."
+                  ? 'Ask a follow-up question...'
+                  : 'Ask a question or type a command...'
               }
               rows="1"
               disabled={isLoading}
+              aria-label="Message input"
             />
             <button
               type="submit"
               disabled={isLoading || !inputValue.trim()}
               className="absolute right-2.5 flex h-8 w-8 items-center justify-center rounded-md bg-primary text-white transition-colors hover:bg-primary/90 disabled:bg-primary/50"
+              aria-label="Send message"
             >
               {isLoading ? (
                 <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
@@ -454,7 +464,6 @@ This is a **test response** since the backend is currently not accessible.
           setCurrentUploadId(null);
           console.log('UFDR extraction completed!', data);
 
-          // Optionally show a success message
           if (data?.overall_status === 'completed') {
             console.log('✓ All data extracted successfully');
           }
@@ -462,6 +471,11 @@ This is a **test response** since the backend is currently not accessible.
       />
     </main>
   );
+};
+
+MainContent.propTypes = {
+  isChatView: PropTypes.bool,
+  sessionId: PropTypes.string,
 };
 
 export default MainContent;
